@@ -276,7 +276,8 @@ listNode *listNext(listIter *iter)
  * the original node is used as value of the copied node.
  *
  * The original list both on success or error is never modified. */
-
+/* 复制一个链表
+*  原理：利用迭代器，逐个将链表结点复制到新的链表中，传入参数是原始链表 */
 
 list *listDup(list *orig)
 {
@@ -285,13 +286,15 @@ list *listDup(list *orig)
     listNode *node;
 
     if ((copy = listCreate()) == NULL)
-        return NULL;
+        return NULL; // 如果新链表创建失败，则直接返回null
     copy->dup = orig->dup;
     copy->free = orig->free;
     copy->match = orig->match;
-    iter = listGetIterator(orig, AL_START_HEAD);
+
+    iter = listGetIterator(orig, AL_START_HEAD); // 定义一个原链表的从头开始的迭代器
+    // 迭代下一个链表结点给node，如果链表有自定义的dup函数则优先使用，否则直接赋值给copy链表
     while((node = listNext(iter)) != NULL) {
-        void *value;
+        void *value; 
 
         if (copy->dup) {
             value = copy->dup(node->value);
@@ -303,10 +306,11 @@ list *listDup(list *orig)
         } else
             value = node->value;
         if (listAddNodeTail(copy, value) == NULL) {
-            listRelease(copy);
+	   // 后面的结点都是一直添加到新链表的尾部，如果内存溢出，则释放copy和orig的迭代器
+	    listRelease(copy);
             listReleaseIterator(iter);
             return NULL;
-        }
+       }
     }
     listReleaseIterator(iter);
     return copy;
@@ -321,6 +325,9 @@ list *listDup(list *orig)
  * On success the first matching node pointer is returned
  * (search starts from head). If no matching node exists
  * NULL is returned. */
+
+/* 通过迭代器从头部对链表进行逐个比对，直到匹配到相应的value，否则遍历完毕返回null */
+
 listNode *listSearchKey(list *list, void *key)
 {
     listIter *iter;
@@ -349,6 +356,11 @@ listNode *listSearchKey(list *list, void *key)
  * and so on. Negative integers are used in order to count
  * from the tail, -1 is the last element, -2 the penultimate
  * and so on. If the index is out of range NULL is returned. */
+
+/* 根据索引下标来返回相应的节点
+*  下标是正数：从0开始即  0 1 2 4 ...  一次指向下一个结点
+*  下标是负数：从-1开始 即 -1 -2 -3 -4 ..  依次指向前一个结点
+*/
 listNode *listIndex(list *list, long index) {
     listNode *n;
 
@@ -357,8 +369,14 @@ listNode *listIndex(list *list, long index) {
         n = list->tail;
         while(index-- && n) n = n->prev;
     } else {
-        n = list->head;
-        while(index-- && n) n = n->next;
+        n = list->head; // n 赋为头节点开始
+        while(index-- && n) n = n->next; 
+	// 当index--大于0 和 n都成立的时候，说明index在链表范围内，则继续 n->next
+        // 当index--大于0 不成立，n成立，说明index遍历完了，且在链表范围内，此时的index应为0,即为上一次循环的输出值，此次条件不成立
+	//  就不在执行n=n-->next ，所以返回的是index为0，而n则是null，因为链表下标从0开始，比如 index为5，则输出的index值为 4 3
+	// 2 1 0,所以对应的应该是下标为0 1 2 3 4，对应的是下标为4的结点，但是这里有n=n-->next 所以返回的是下标为5的结点
+	// 当index--大于0成立，n不成立，说明idnex out of range了，此时n为null
+	// 所以要不返回相应的索引下标的结点，要不返回null
     }
     return n;
 }

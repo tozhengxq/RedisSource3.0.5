@@ -33,6 +33,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* redis中的数据类型，如hash哈希表，set集合底层都是用字典来实现的
+*  字典的实现是通过哈希表的算法来实现的
+*  其他：
+*  当要添加一个键值对到字典里面时，程序需要先根据键值对的键计算出哈西值和索引值，然后再根据索引值将包含
+*  新键值对的哈西节点放到哈西表数组的指定索引上面
+*  利用哈希表 里的next，形成链表，来解决字典中的键冲突问题*/
+
 #include <stdint.h>
 
 #ifndef __DICT_H
@@ -44,20 +51,24 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+/*定义哈希表的节点，节点存储相应的键值对,上级对应着哈希表*/ 
 typedef struct dictEntry {
-    void *key;
+    void *key; // 存储键
     union {
         void *val;
         uint64_t u64;
         int64_t s64;
         double d;
-    } v;
-    struct dictEntry *next;
+    } v; // 存储相应的值，可以是指针，uint64等
+    struct dictEntry *next; // 一个指向next 节点的指针，用以解决字典的key（计算出hash值）的冲突问题
+			    // key的hash值相同的键值对，会在这里形成一个链表，因为链表只有next指针，所以最后插入的节点排在链表
+			    // 最前面，redis中，就相当于冲突的key不会报错，会覆盖掉原来的key
 } dictEntry;
 
+/* 字典类型，存储相关的操作函数，上级是字典*/
 typedef struct dictType {
-    unsigned int (*hashFunction)(const void *key);
-    void *(*keyDup)(void *privdata, const void *key);
+    unsigned int (*hashFunction)(const void *key); // 计算key的hash值的函数
+    void *(*keyDup)(void *privdata, const void *key); // 
     void *(*valDup)(void *privdata, const void *obj);
     int (*keyCompare)(void *privdata, const void *key1, const void *key2);
     void (*keyDestructor)(void *privdata, void *key);
@@ -66,18 +77,22 @@ typedef struct dictType {
 
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
+
+/*哈希表，对应上级是字典dict*/
+
 typedef struct dictht {
-    dictEntry **table;
-    unsigned long size;
-    unsigned long sizemask;
-    unsigned long used;
+    dictEntry **table; // 定义哈希表中的哈希节点  指针数组
+    unsigned long size; // 哈希表大小，也就是哈希节点数量
+    unsigned long sizemask; // mask 码，用以地址索引计算
+    unsigned long used; // 哈希表size使用量，哈希节点的使用量
 } dictht;
 
+/*字典*/
 typedef struct dict {
-    dictType *type;
-    void *privdata;
-    dictht ht[2];
-    long rehashidx; /* rehashing not in progress if rehashidx == -1 */
+    dictType *type; // 字典类型，对应着一组操作函数
+    void *privdata; // 私有数据
+    dictht ht[2]; // 哈希表，这里一般有ht[0] ht[1] 两个哈希表，用以字典的渐进式rehash操作
+    long rehashidx; /* rehashing not in progress if rehashidx == -1 ，字典rehash操作的标志量 0 为正在运行，－1 为停止*/
     int iterators; /* number of iterators currently running */
 } dict;
 
@@ -85,14 +100,18 @@ typedef struct dict {
  * dictAdd, dictFind, and other functions against the dictionary even while
  * iterating. Otherwise it is a non safe iterator, and only dictNext()
  * should be called while iterating. */
+/* 字典的迭代器*/
 typedef struct dictIterator {
-    dict *d;
+    dict *d; // 字典
     long index;
     int table, safe;
-    dictEntry *entry, *nextEntry;
+    dictEntry *entry, *nextEntry; // 哈希表节点指针，和指向下一个节点的指针
     /* unsafe iterator fingerprint for misuse detection. */
     long long fingerprint;
 } dictIterator;
+
+/* 接口定义，函数定义，对应的实现方法在dict.c 中*/
+
 
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 
@@ -177,7 +196,7 @@ void dictSetHashFunctionSeed(unsigned int initval);
 unsigned int dictGetHashFunctionSeed(void);
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, void *privdata);
 
-/* Hash table types */
+/* Hash table types */ 
 extern dictType dictTypeHeapStringCopyKey;
 extern dictType dictTypeHeapStrings;
 extern dictType dictTypeHeapStringCopyKeyValue;

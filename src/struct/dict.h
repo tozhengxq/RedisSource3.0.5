@@ -81,7 +81,7 @@ typedef struct dictType {
 /*哈希表，对应上级是字典dict*/
 
 typedef struct dictht {
-    dictEntry **table; // 定义哈希表中的哈希节点  指针数组
+    dictEntry **table; // 定义哈希表中的哈希节点,节点指针数组，各个节点以数组的形式在hashtable中
     unsigned long size; // 哈希表大小，也就是哈希节点数量
     unsigned long sizemask; // mask 码，用以地址索引计算
     unsigned long used; // 哈希表size使用量，哈希节点的使用量
@@ -113,23 +113,28 @@ typedef struct dictIterator {
 /* 接口定义，函数定义，对应的实现方法在dict.c 中*/
 
 
+// 字典扫描方法
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 
 /* This is the initial size of every hash table */
-#define DICT_HT_INITIAL_SIZE     4
+#define DICT_HT_INITIAL_SIZE     4  
+// hash表初始化的大小，4
 
 /* ------------------------------- Macros ------------------------------------*/
+/* 字典释放val时候调用，如果dictType有定义这个valDestructor函数的话，就调用这个函数*/
 #define dictFreeVal(d, entry) \
     if ((d)->type->valDestructor) \
         (d)->type->valDestructor((d)->privdata, (entry)->v.val)
-
+/* 字典设置val的时候调用，如果dictType有定义就用*/
 #define dictSetVal(d, entry, _val_) do { \
     if ((d)->type->valDup) \
         entry->v.val = (d)->type->valDup((d)->privdata, _val_); \
     else \
         entry->v.val = (_val_); \
 } while(0)
-
+/* 接下来四个的定义，是对哈希节点dictEntry中union v的赋值，union定义类似与结构体，但是它们共用一块
+*  内存，一次只能对其中一个赋值，对某一个成员赋值就会覆盖其他成员的值；union大小是其成员中最大的大小*/
+// 设置dictEntry中共用体v的值
 #define dictSetSignedIntegerVal(entry, _val_) \
     do { entry->v.s64 = _val_; } while(0)
 
@@ -138,7 +143,8 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 
 #define dictSetDoubleVal(entry, _val_) \
     do { entry->v.d = _val_; } while(0)
-
+/*dictFreeKey,dictSetKey 与 dictFreeVal ,dictSetVal类似
+* 如果dictType中有定义则使用*/
 #define dictFreeKey(d, entry) \
     if ((d)->type->keyDestructor) \
         (d)->type->keyDestructor((d)->privdata, (entry)->key)
@@ -149,51 +155,88 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
     else \
         entry->key = (_key_); \
 } while(0)
-
+/* 也是和dictType有关，定义两个key值的比较，如果dictType中有定义，则调用，没有则直接比较*/
 #define dictCompareKeys(d, key1, key2) \
     (((d)->type->keyCompare) ? \
         (d)->type->keyCompare((d)->privdata, key1, key2) : \
         (key1) == (key2))
-
+// 获取key的hash值，调用dictType中的hashFunction函数
 #define dictHashKey(d, key) (d)->type->hashFunction(key)
+// 获取哈希节点dictEntry 的key值
 #define dictGetKey(he) ((he)->key)
+// 获取dictEntry的共用体中的val值
 #define dictGetVal(he) ((he)->v.val)
+// ... 有符号值
 #define dictGetSignedIntegerVal(he) ((he)->v.s64)
+// ... 无符号值
 #define dictGetUnsignedIntegerVal(he) ((he)->v.u64)
+// ... double类型值
 #define dictGetDoubleVal(he) ((he)->v.d)
+// 获取字典大小，取哈西表1 和 2 的和
 #define dictSlots(d) ((d)->ht[0].size+(d)->ht[1].size)
+// 获取字典使用大小，去哈希表1 和 2 的used值的和
 #define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
+// 初始化rehash标志，为  －1 ，置为0表示开始rehash
 #define dictIsRehashing(d) ((d)->rehashidx != -1)
 
 /* API */
+// 字典创建，传入type和privadata  返回一个字典
 dict *dictCreate(dictType *type, void *privDataPtr);
+// 字典扩充
 int dictExpand(dict *d, unsigned long size);
+// 根据key 和 value 向字典中添加一个dictEntry
 int dictAdd(dict *d, void *key, void *val);
+// 向字典中添加一个key，没有value，返回指向该key所在的dictEntry
 dictEntry *dictAddRaw(dict *d, void *key);
+// 替换字典中的相应key value的dictEntry
 int dictReplace(dict *d, void *key, void *val);
+// 根据key替换字典中的dictEntry，返回指向该entry的指针
 dictEntry *dictReplaceRaw(dict *d, void *key);
+// 根据key删除一个dictEntry
 int dictDelete(dict *d, const void *key);
+// 根据key删除一个dictEntry，不释放？？？
 int dictDeleteNoFree(dict *d, const void *key);
+// 释放一个字典
 void dictRelease(dict *d);
+// 根据key查找一个dictEntry
 dictEntry * dictFind(dict *d, const void *key);
+// 根据key从字典中取出相应的value
 void *dictFetchValue(dict *d, const void *key);
+// 重定义dict的大小
 int dictResize(dict *d);
+// 创建某个字典的迭代器
 dictIterator *dictGetIterator(dict *d);
+// 创建某个字典的安全迭代器，和上面有什么区别，具体看函数定义部分
 dictIterator *dictGetSafeIterator(dict *d);
+// 根据字典迭代器，获取字典中下一个dictEntry
 dictEntry *dictNext(dictIterator *iter);
+// 释放迭代器
 void dictReleaseIterator(dictIterator *iter);
-dictEntry *dictGetRandomKey(dict *d);
+// 返回一个字典的随机的dictEntry
+dictEntry *dictGetRandomKey(dictw *d);
+//
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count);
+//打印字典的状态，分两部分 _dictPrintStatsHt 和 是否正在rehash的判断
 void dictPrintStats(dict *d);
+//
 unsigned int dictGenHashFunction(const void *key, int len);
+//
 unsigned int dictGenCaseHashFunction(const unsigned char *buf, int len);
+//
 void dictEmpty(dict *d, void(callback)(void*));
+//启用resize
 void dictEnableResize(void);
+//停止resize
 void dictDisableResize(void);
+//rehash操作
 int dictRehash(dict *d, int n);
+//
 int dictRehashMilliseconds(dict *d, int ms);
+//
 void dictSetHashFunctionSeed(unsigned int initval);
+//
 unsigned int dictGetHashFunctionSeed(void);
+// 定义字典扫描
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, void *privdata);
 
 /* Hash table types */ 

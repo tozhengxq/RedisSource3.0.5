@@ -81,7 +81,7 @@ typedef struct dictType {
 /*哈希表，对应上级是字典dict*/
 
 typedef struct dictht {
-    dictEntry **table; // 定义哈希表中的哈希节点,节点指针数组，各个节点以数组的形式在hashtable中
+    dictEntry **table; // 定义哈希表中的哈希节点,节点指针数组，各个节点以数组的形式在hashtable中, dictEntry*[size]
     unsigned long size; // 哈希表大小，也就是哈希节点数量
     unsigned long sizemask; // mask 码，用以地址索引计算
     unsigned long used; // 哈希表size使用量，哈希节点的使用量
@@ -92,7 +92,11 @@ typedef struct dict {
     dictType *type; // 字典类型，对应着一组操作函数
     void *privdata; // 私有数据
     dictht ht[2]; // 哈希表，这里一般有ht[0] ht[1] 两个哈希表，用以字典的渐进式rehash操作
-    long rehashidx; /* rehashing not in progress if rehashidx == -1 ，字典rehash操作的标志量 0 为正在运行，－1 为停止*/
+    long rehashidx; 
+/* rehashing not in progress if rehashidx == -1 ，字典rehash操作的
+* 标志量 0 为开始尽行rehash，－1 为停止，在整个rehash过程中，rehashidx实际上是代表的
+* 是dictentry的索引下标，所以在rehash期间，有新的操作进来的时候，redis会顺带将rehashidx
+* 索引上的键值对rehash到ht[1] , 所以日积月累，就会rehash完毕，这也是渐进式reash*/
     int iterators; /* number of iterators currently running */
 } dict;
 

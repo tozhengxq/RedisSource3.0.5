@@ -55,11 +55,18 @@
  * Note that even when dict_can_resize is set to 0, not all resizes are
  * prevented: a hash table is still allowed to grow if the ratio between
  * the number of elements and the buckets > dict_force_resize_ratio. */
+
+/*
+* 通过dictEnableResize/dictDisableResize,来给必要的hash table调整长度，进行扩展和收缩
+* redis采用cow技术进行save操作，在子进程运行期间，不希望挪动太多内存，所以需要达到一定条件才能resize有效
+* 条件就是 dict_can_resize 和 dict_force_resize_ratio,根据有没有执行bgsave or bgrewriteaof 操作，和哈希表
+* 的负载因子来决定怎么是否自动开始进行扩展操作
+*/
 static int dict_can_resize = 1;
 static unsigned int dict_force_resize_ratio = 5;
 
 /* -------------------------- private prototypes ---------------------------- */
-
+/*一些私有方法*/
 static int _dictExpandIfNeeded(dict *ht);
 static unsigned long _dictNextPower(unsigned long size);
 static int _dictKeyIndex(dict *ht, const void *key);
@@ -68,9 +75,10 @@ static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
 /* -------------------------- hash functions -------------------------------- */
 
 /* Thomas Wang's 32 bit Mix Function */
+/*hash算法 , 对key进行异或，位移等运算，返回相应的hash值*/
 unsigned int dictIntHashFunction(unsigned int key)
 {
-    key += ~(key << 15);
+    key += ~(key << 15); 
     key ^=  (key >> 10);
     key +=  (key << 3);
     key ^=  (key >> 6);
@@ -88,6 +96,21 @@ void dictSetHashFunctionSeed(uint32_t seed) {
 uint32_t dictGetHashFunctionSeed(void) {
     return dict_hash_function_seed;
 }
+// 以上是hash相关，采用的thomas wang的 32bit 整数hash算法，另有64bit的，类似，只是计算位数更多
+/* 下面是64bit的整数hash算法
+*unsigned intHash(uint64_t key)  
+*{  
+*        key += ~(key << 32);  
+*        key ^= (key >> 22);  
+*        key += ~(key << 13);  
+*        key ^= (key >> 8);  
+*        key += (key << 3);  
+*        key ^= (key >> 15);  
+*        key += ~(key << 27);  
+*        key ^= (key >> 31);  
+*        return static_cast<unsigned>(key);  
+*} 
+*/ 
 
 /* MurmurHash2, by Austin Appleby
  * Note - This code makes a few assumptions about how your machine behaves -
@@ -156,15 +179,19 @@ unsigned int dictGenCaseHashFunction(const unsigned char *buf, int len) {
 
 /* Reset a hash table already initialized with ht_init().
  * NOTE: This function should only be called by ht_destroy(). */
+/* 重置hash table，且只能在ht_destory() 中调用 */
 static void _dictReset(dictht *ht)
 {
-    ht->table = NULL;
+    ht->table = NULL; // 没有为hash table分配空间
     ht->size = 0;
     ht->sizemask = 0;
     ht->used = 0;
 }
+// 一切归0
 
 /* Create a new hash table */
+/* 字典创建过程，注意创建dict的时候，没有为hash表分配空间
+*  创建过程的调用逻辑是： dictCreate --> _dictInit --> _dictReset 返回一个初始化好的dict */
 dict *dictCreate(dictType *type,
         void *privDataPtr)
 {
@@ -189,22 +216,30 @@ int _dictInit(dict *d, dictType *type,
 
 /* Resize the table to the minimal size that contains all the elements,
  * but with the invariant of a USED/BUCKETS ratio near to <= 1 */
+
+/* 调整字典的size，用最小的空间容纳所有的节点*/
 int dictResize(dict *d)
 {
     int minimal;
 
     if (!dict_can_resize || dictIsRehashing(d)) return DICT_ERR;
-    minimal = d->ht[0].used;
-    if (minimal < DICT_HT_INITIAL_SIZE)
+    minimal = d->ht[0].used;  // 最小值，就是当前的节点数量
+    if (minimal < DICT_HT_INITIAL_SIZE)  // 如果最小值小于初始化的值，则resize为初始化的值，就是 4
         minimal = DICT_HT_INITIAL_SIZE;
     return dictExpand(d, minimal);
 }
 
 /* Expand or create the hash table */
+/* 扩展空间，或者进行初始化创建一个hash table
+*  逻辑就是： 
+*  1， 正在rehash的字典不进行扩展操作
+*  2,  realsize大小异常，就是小于原size，也不进行操作
+*  3,  如果是未初始化的hashtable，则realsize ＝ 4，就进行初始化操作，直接将n付给d->ht[0]
+*  4,  将n赋给第二个hash table，就是ht[1] ,然后通过rehash来实际进行扩展才做 */
 int dictExpand(dict *d, unsigned long size)
 {
     dictht n; /* the new hash table */
-    unsigned long realsize = _dictNextPower(size);
+    unsigned long realsize = _dictNextPower(size); // 参考_dictNextPower 定义，根据传入的size确定realsize值
 
     /* the size is invalid if it is smaller than the number of
      * elements already inside the hash table */
@@ -216,8 +251,8 @@ int dictExpand(dict *d, unsigned long size)
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
-    n.sizemask = realsize-1;
-    n.table = zcalloc(realsize*sizeof(dictEntry*));
+    n.sizemask = realsize-1;  // hashtable是一个指针数组，sizemask 也就是索引值，实际上对应的就是数组的下标，从0开始，所以减1
+    n.table = zcalloc(realsize*sizeof(dictEntry*)); // 实际分配空间 就是 realsize * 每个字典节点的大小
     n.used = 0;
 
     /* Is this the first initialization? If so it's not really a rehashing
@@ -229,7 +264,7 @@ int dictExpand(dict *d, unsigned long size)
 
     /* Prepare a second hash table for incremental rehashing */
     d->ht[1] = n;
-    d->rehashidx = 0;
+    d->rehashidx = 0;  // 注意，将字典的rehashidx从－1改成0，触发rehash操作，此时ht[1] 空间也已经扩展好了
     return DICT_OK;
 }
 
@@ -242,9 +277,15 @@ int dictExpand(dict *d, unsigned long size)
  * guaranteed that this function will rehash even a single bucket, since it
  * will visit at max N*10 empty buckets in total, otherwise the amount of
  * work it does would be unbound and the function may block for a long time. */
+/* 
+*
+*
+* rehash的完整实现，表示如何将一个entry从ht[0] 移到 ht[1]
+**/
 int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
-    if (!dictIsRehashing(d)) return 0;
+
+    if (!dictIsRehashing(d)) return 0; //对rehashidx做一个判断，如果是 －1，则返回0，就是不准许rehash
 
     while(n-- && d->ht[0].used != 0) {
         dictEntry *de, *nextde;
@@ -942,15 +983,16 @@ static int _dictExpandIfNeeded(dict *d)
 }
 
 /* Our hash table capability is a power of two */
+/* 在对dict进行扩展 ，满足一定条件则进行2倍的扩展*/
 static unsigned long _dictNextPower(unsigned long size)
 {
-    unsigned long i = DICT_HT_INITIAL_SIZE;
+    unsigned long i = DICT_HT_INITIAL_SIZE;  // 4
 
-    if (size >= LONG_MAX) return LONG_MAX;
+    if (size >= LONG_MAX) return LONG_MAX; // 最大扩展到 LONG_MAX 大小
     while(1) {
         if (i >= size)
-            return i;
-        i *= 2;
+            return i;   // 如果目前size还没有初始化时候的大小，那就是返回初始化大小，这里是4
+        i *= 2; // 返回两倍
     }
 }
 

@@ -284,7 +284,10 @@ int dictExpand(dict *d, unsigned long size)
 **/
 int dictRehash(dict *d, int n) {
     int empty_visits = n*10; /* Max number of empty buckets to visit. */
-
+    // 在rehash过程中,如果相应索引位置上的值为空的数量大于empty_vistis的时候，则return 1，停止循环
+    // n 表示要迁移的节点的数量，渐进式rehash中，通过_dictRehashStep函数触发的，都是n为1，就是一次
+    // 迁移一个节点
+ 
     if (!dictIsRehashing(d)) return 0; //对rehashidx做一个判断，如果是 －1，则返回0，就是不准许rehash
 
     while(n-- && d->ht[0].used != 0) {
@@ -292,12 +295,16 @@ int dictRehash(dict *d, int n) {
 
         /* Note that rehashidx can't overflow as we are sure there are more
          * elements because ht[0].used != 0 */
-        assert(d->ht[0].size > (unsigned long)d->rehashidx);
+        // assert函数定义在redisassert.h 中
+	// 
+	assert(d->ht[0].size > (unsigned long)d->rehashidx); //  ???
+
         while(d->ht[0].table[d->rehashidx] == NULL) {
             d->rehashidx++;
             if (--empty_visits == 0) return 1;
-        }
-        de = d->ht[0].table[d->rehashidx];
+        } // 判断空节点是不是超过empty_visits,超过则退出循环
+
+        de = d->ht[0].table[d->rehashidx]; //去rehashidx值对应位置上的entry
         /* Move all the keys in this bucket from the old to the new hash HT */
         while(de) {
             unsigned int h;
@@ -305,22 +312,28 @@ int dictRehash(dict *d, int n) {
             nextde = de->next;
             /* Get the index in the new hash table */
             h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+	    // 取key的hash值 ????
             de->next = d->ht[1].table[h];
             d->ht[1].table[h] = de;
             d->ht[0].used--;
             d->ht[1].used++;
             de = nextde;
         }
-        d->ht[0].table[d->rehashidx] = NULL;
-        d->rehashidx++;
+        d->ht[0].table[d->rehashidx] = NULL; // 迁移完毕则将ht[0]对应的赋值为null
+        d->rehashidx++;  // 递增，等待下次调用
     }
 
     /* Check if we already rehashed the whole table... */
+    /*
+    * 释放ht[0],并且将ht[1]映射为ht[0],然后重新初始化ht[1]
+    * 在rehash期间，每一次更新，查询，删除都是先从ht[0]中定位，没有的话在去ht[1]中，
+    * 再次期间新插入的是插入ht[1],然后ht[0]每一次操作，在完成本身操作外都会触发一次一个entry的迁移
+    * 知道ht[0]迁移完，就是used ＝＝ 0*/
     if (d->ht[0].used == 0) {
         zfree(d->ht[0].table);
-        d->ht[0] = d->ht[1];
+        d->ht[0] = d->ht[1]; // 将ht[1] 赋给ht[0]
         _dictReset(&d->ht[1]);
-        d->rehashidx = -1;
+        d->rehashidx = -1;  // 关闭rehash
         return 0;
     }
 
@@ -328,6 +341,7 @@ int dictRehash(dict *d, int n) {
     return 1;
 }
 
+// 获取毫秒时间
 long long timeInMilliseconds(void) {
     struct timeval tv;
 
@@ -336,6 +350,7 @@ long long timeInMilliseconds(void) {
 }
 
 /* Rehash for an amount of time between ms milliseconds and ms+1 milliseconds */
+// 在一定的时间内，循环迁移 100 
 int dictRehashMilliseconds(dict *d, int ms) {
     long long start = timeInMilliseconds();
     int rehashes = 0;
@@ -355,14 +370,22 @@ int dictRehashMilliseconds(dict *d, int ms) {
  * This function is called by common lookup or update operations in the
  * dictionary so that the hash table automatically migrates from H1 to H2
  * while it is actively used. */
+// 当没有迭代器正在工作的时候，才能进行rehash操作，一次迁移一个
 static void _dictRehashStep(dict *d) {
     if (d->iterators == 0) dictRehash(d,1);
 }
 
 /* Add an element to the target hash table */
+/* 前面提到，创建字典的流程 dictCreate--> _dictInit --> _dictReset ，这些操作后，并没有
+*  给hash table分配空间
+*  下面讲的是 hash table的创建流程
+*   dictAdd --> dictAddRaw --> _dictKeyIndex 
+*/
+
+// 想字典中添加一个entry，并且setvalue，对其赋值
 int dictAdd(dict *d, void *key, void *val)
 {
-    dictEntry *entry = dictAddRaw(d,key);
+    dictEntry *entry = dictAddRaw(d,key); // 调用dictAddRaw 翻译entry的地址
 
     if (!entry) return DICT_ERR;
     dictSetVal(d, entry, val);
